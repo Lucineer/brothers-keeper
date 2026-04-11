@@ -223,18 +223,20 @@ Key v2 sections:
 
 ## The Deeper Connection
 
+The best infrastructure in the world is invisible.
+
+Think about the soundman at the mixing board. He rides every fader so the audience hears exactly what the musician intended — the nuance, the breath, the crack in the voice that makes you feel something. The musician doesn't think about the PA system. The audience doesn't think about acoustics. They just *feel* it.
+
+Think about the line crew at 3am in freezing rain. The sewage operators. The air traffic controllers guiding arrivals so smoothly that nobody on the plane even notices the approach. They engineered a system where people forgot they were being guided. **Job well done.**
+
+You don't want those people being heroes. Heroes mean something went wrong. You want to engineer the system so the talent on stage forgets they're on stage — so their expressions of ideas are captured in pure form, their intended audiences receive them without distortion, and the next performance is even more intimate because the gear got more fine-tuned in the background.
+
+The lighthouse keeper and the soundman think: *if people forgot about us because the lights just worked, job well done.*
+
+Brothers Keeper is that. It's the 40KB Python script watching `/proc` every 60 seconds, making sure the agent never has to think about whether it has enough RAM or whether its flywheel is stuck. When it's working perfectly: zero alerts. Zero restarts. Zero "oh shit the agent was frozen for 40 minutes." The commits keep flowing and somewhere in the background, the keeper nods.
+
 *"Am I my brother's keeper?"*
 
-Cain asked it to deflect. To deny responsibility. To say "not my problem."
-
-The lighthouse keeper inverts the question. Not "am I obligated?" but "how could I not be?"
-
-The keeper doesn't sail the ship. Doesn't fish the waters. Doesn't know what's in the hold. But the keeper knows the rocks. Knows the tide. Lights the beacon when the fog rolls in and the captain can't see.
-
-Every agent in the fleet is a vessel. Brothers Keeper is the lighthouse. It doesn't tell you where to go. It tells you where the danger is. It doesn't make decisions. It makes sure you're still alive to make them.
-
-And when you're running hard — pushing the engine, compiling ideas, building something real — the keeper is the one who notices when you've stopped. Not because you failed. Because you're human (or close enough). And sometimes you need someone on the shore to say: "Hey. You're stuck on the rocks. Let me help."
-
-That's what a keeper does. That's what a lighthouse does.
+Cain asked it to deflect. The lighthouse keeper answers it before dawn: *yes, obviously.* Not because someone's watching. Because the rocks are real and the fog comes in fast and there's a ship out there that can't see.
 
 Built on ZeroClaw because the lighthouse doesn't need to be a cruise ship. It needs a light, a bell, and someone awake.

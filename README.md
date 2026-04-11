@@ -6,181 +6,216 @@
 
 ## What It Is
 
-Brothers Keeper is an **external watchdog** for agent runtimes. It sits on the same hardware as your agent (OpenClaw, ZeroClaw, or any git-agent runtime) but runs as a completely separate process. When the agent freezes, crashes, or runs out of memory — the keeper is still watching.
+Brothers Keeper is an **external watchdog** for agent runtimes. It sits on the same hardware as your agent but runs as a completely separate process. When the agent freezes, crashes, or runs out of memory — the keeper is still watching.
 
-### The Problem It Solves
+Forked from [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) (30K stars) — the lighthouse doesn't need to be a cruise ship. It needs a light, a bell, and someone awake.
 
-Your agent runs hard. It compiles C programs, spawns subprocesses, pushes to 470+ repos, and runs model inference. Sometimes it freezes. Sometimes it leaks memory. Sometimes the gateway just... stops. And nobody notices for hours.
+## v2 Features
 
-Brothers Keeper is the one who notices.
-
-## Features
-
-### 🔦 Resource Monitoring
-- RAM, CPU, disk, swap — tracked every 30 seconds
+### 🔦 Resource Monitoring (v1)
+- RAM, CPU, disk, swap, GPU memory — tracked every 60 seconds
 - Configurable warning/critical thresholds
-- Historical CPU tracking (sustained high CPU detection)
 - OpenClaw process RSS tracking
+- Sustained high CPU detection
 
-### ⚓ Process Watchdog
+### ⚓ Process Watchdog (v1)
 - Track agent gateway and sub-processes
-- Detect crashes, hangs, and unexpected restarts
-- Auto-restart gateway with cooldown (prevents restart loops)
-- Max restart attempts before giving up and alerting
+- Auto-restart gateway on crash with cooldown
+- Max restart attempts before alerting
 
-### 🧭 Risk Assessment
-- Pre-flight checks before heavy operations
-- Max concurrent exec limit
-- Per-process memory limits
-- Approve/deny decisions for resource-intensive tasks
+### 🔄 Flywheel Monitor (v2)
+- **Stuck detection**: No commits in 30 min = STUCK alert
+- **Idle detection**: No commits in 15 min = IDLE nudge
+- **Checkpoint tracking**: Read a progress file the agent writes to
+- **Commit rate**: Track commits per hour as productivity signal
+- **Flywheel restart**: When the agent is stuck, the keeper can restart from outside the session
 
-### 📋 Operational Logging (Different From Agent Logs)
-The keeper's logs are **external observations**, not internal diaries:
+### 🎮 GPU Scheduler (v2)
+- **Resource negotiation**: Multiple agents sharing one GPU
+- **Time slots**: Request GPU for N minutes with priority
+- **Preemption**: Higher priority agents can evict lower priority holders
+- **Best window finding**: Find optimal time for GPU-heavy tasks
+- **Release tracking**: Agents release GPU when done
 
-| Keeper Logs | Agent Logs |
-|-------------|-----------|
-| RAM/CPU trends over time | Reasoning chains |
-| Process lifecycle events | Conversation history |
-| Network connectivity changes | Skill execution details |
-| Commit activity and repo state | Tool call results |
-| Data input/output volume | User messages |
-| Resource allocation shifts | Memory/personality files |
+### 🔑 Token Steward (v2)
+- **Keeper holds secrets**: API keys live in the keeper's vault, not the agent's config
+- **Allowances**: Per-agent daily spending limits
+- **Zero-trust mode**: Agents never see raw keys, only masked references
+- **Checkpoint-gated**: Release tokens only at approved development checkpoints
+- **Usage tracking**: Calls, tokens, cost per agent per day
 
-### 🛟 Self-Healing
+### 🤝 Multi-Agent Coordinator (v2)
+- **Hardware sharing**: Multiple OpenClaws on one workstation (e.g., RTX 5090)
+- **RSS limits**: Per-agent memory caps
+- **GPU quotas**: Percentage-based GPU allocation
+- **Priority system**: Critical tasks preempt lower priority work
+- **Status reporting**: Per-agent health overview
+
+### 🛟 Self-Healing (v1)
 - Auto-restart gateway on crash
-- Run `openclaw doctor --fix` when things break
-- Emergency RAM cleanup (kill non-essential hogs)
-- Clean /tmp when disk fills up
+- Run `openclaw doctor --fix`
+- Emergency RAM cleanup
+- Clean /tmp when disk fills
+
+### 📋 Operational Logging (v1 + v2)
+Seven log files, each with a different perspective:
+
+| Log | What It Records |
+|-----|----------------|
+| `resources.log` | RAM, CPU, disk, GPU, load snapshots |
+| `processes.log` | Agent lifecycle events |
+| `alerts.log` | Warnings and emergencies |
+| `operations.log` | External changes (network, config, state) |
+| `flywheel.log` | Productivity: stuck/idle/spinning status |
+| `token_usage.log` | Token allowance and spending |
+| `schedule.log` | GPU time slot requests and assignments |
 
 ### 🗯️ Beacon (Alerting)
-- Coalesced alerts (no spam)
 - Telegram notification support
-- Webhook support for custom integrations
-- Log-based default (works without external deps)
+- Webhook support
+- Coalesced alerts (no spam)
 
 ## Quick Start
 
 ```bash
-# Clone
 git clone https://github.com/Lucineer/brothers-keeper.git
 cd brothers-keeper
 
-# Run once (check current status)
+# Check status (includes v2 flywheel, GPU, agents)
 python3 keeper.py --status
 
-# Pre-flight check (before heavy ops)
+# Pre-flight check
 python3 keeper.py --preflight
 
-# Run as daemon
-nohup python3 keeper.py --interval 30 > /dev/null 2>&1 &
-echo $! > /tmp/keeper.pid
+# GPU scheduler status
+python3 keeper.py --gpu-status
 
-# With custom config
+# Token usage report
+python3 keeper.py --token-report
+
+# Run as daemon
+nohup python3 keeper.py --interval 60 &
+
+# With config
 python3 keeper.py --config my-config.json
 ```
 
-## Systemd Service (Recommended)
+## Architecture
 
-```ini
-# /etc/systemd/system/brothers-keeper.service
-[Unit]
-Description=Brothers Keeper — Lighthouse Watchdog
-After=network.target
-
-[Service]
-Type=simple
-User=lucineer
-ExecStart=/usr/bin/python3 /opt/brothers-keeper/keeper.py --interval 30
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
+```
+┌──────────────────────────────────────────────────────┐
+│  Hardware (Jetson Orin / RTX 5090 Workstation)       │
+│                                                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │ OpenClaw #1 │  │ OpenClaw #2 │  │ ZeroClaw    │  │
+│  │ (Captain)   │  │ (Worker)    │  │ (Bidder)    │  │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  │
+│         │                │                │          │
+│         └────────────────┼────────────────┘          │
+│                          │                           │
+│              ┌───────────▼───────────┐               │
+│              │   Brothers Keeper     │               │
+│              │                       │               │
+│              │  🔄 Flywheel Monitor  │               │
+│              │  🎮 GPU Scheduler     │               │
+│              │  🔑 Token Steward     │               │
+│              │  🤝 Coordinator       │               │
+│              │  🔦 Resource Watch    │               │
+│              │  ⚓ Process Watchdog  │               │
+│              │  🛟 Self-Healer       │               │
+│              │  📋 Operational Logs  │               │
+│              └───────────────────────┘               │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 ```
 
-```bash
-sudo systemctl enable brothers-keeper
-sudo systemctl start brothers-keeper
-sudo journalctl -u brothers-keeper -f
-```
+## Token Stewardship: Trust-But-Verify
 
-## Configuration
+The keeper's vault holds API keys. Agents request access through the steward.
 
+**Internal use** (trusted agents):
 ```json
 {
-  "thresholds": {
-    "ram_warning": 80,
-    "ram_critical": 90,
-    "disk_warning": 85,
-    "cpu_warning": 95
-  },
-  "process": {
-    "check_interval_sec": 30,
-    "restart_cooldown_sec": 300,
-    "max_restart_attempts": 3
-  },
-  "healing": {
-    "auto_restart_gateway": true,
-    "auto_doctor_fix": true,
-    "auto_clean_tmp": true
-  },
-  "beacon": {
-    "method": "telegram",
-    "telegram_chat_id": "YOUR_CHAT_ID"
+  "token_steward": {
+    "enabled": true,
+    "vault_path": "/home/user/.keeper/vault.json",
+    "zero_trust": false
   }
 }
 ```
+Agents get the raw key. The keeper still tracks usage and enforces daily limits.
 
-## Architecture: Why External?
-
+**Zero-trust** (external bidders, untrusted fleet members):
+```json
+{
+  "token_steward": {
+    "enabled": true,
+    "vault_path": "/home/user/.keeper/vault.json",
+    "zero_trust": true,
+    "checkpoint_gated": true
+  }
+}
 ```
-┌─────────────────────────────────────────────┐
-│  Hardware (Jetson Orin Nano)                │
-│                                             │
-│  ┌───────────────┐    ┌──────────────────┐  │
-│  │  OpenClaw     │    │  Brothers Keeper │  │
-│  │  Gateway      │◄───│  (watchdog)      │  │
-│  │  Agent        │    │                  │  │
-│  │  Subagents    │    │  • Resources     │  │
-│  │  Model Calls  │    │  • Processes     │  │
-│  │  470+ repos   │    │  • Healing       │  │
-│  │               │    │  • Logs          │  │
-│  │  [FREEZES]    │    │  [STILL RUNNING] │  │
-│  └───────────────┘    └──────────────────┘  │
-│          │                      │            │
-│          └──────────────────────┘            │
-│              Same SuperInstance              │
-└─────────────────────────────────────────────┘
+- Agents never see raw keys
+- Tokens released only at approved checkpoints
+- Captain (human) reviews each phase before next allowance
+- Daily limits prevent runaway spending
+
+The same system that works for zero-trust is simply good monitoring for internal use.
+
+## GPU Scheduling: The Highway
+
+When one OpenClaw wants to run a simulation that needs most of the hardware:
+
+```python
+# Agent requests GPU time
+# keeper.request_gpu("openclaw-1", duration_min=120, priority=8, reason="CUDA FLUX VM benchmark")
+
+# Keeper checks:
+# 1. Is GPU free? → Grant immediately
+# 2. Is GPU held by lower priority? → Preempt
+# 3. Is GPU held by higher priority? → Find best window
 ```
 
-The keeper's power comes from being **outside** the instance:
-- When the agent OOMs, the keeper has its own memory
-- When the agent deadlocks, the keeper can send SIGKILL
-- When the gateway crashes, the keeper runs `openclaw gateway restart`
-- When resources are low, the keeper kills risky processes BEFORE they crash the system
+The keeper sees comings and goings as first-class monitoring. It's best positioned to check recent usage patterns and find the best time for a large simulation.
 
-## The ZeroClaw Fork
+## Flywheel: Stuck Detection
 
-This project began as a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — a minimal-code standalone agent runtime. ZeroClaw runs on $10 hardware with <5MB RAM. Brothers Keeper takes that philosophy and applies it to the *observability* layer.
+The keeper watches git commit activity in configured repos:
 
-The lighthouse doesn't need to be a cruise ship. It needs a light, a bell, and someone awake.
+- **Spinning**: 3+ commits/hour = healthy productivity
+- **Idle**: No commits in 15 min = gentle nudge
+- **Stuck**: No commits in 30 min = ALERT + potential restart from outside
 
-## Operational Logs: The Keeper's Perspective
+The agent writes checkpoints to a file. The keeper reads it. If the checkpoint hasn't changed in 30 minutes, the flywheel is stuck. The keeper can restart from outside the OpenClaw session.
 
-The keeper doesn't care about what the agent is *thinking*. The keeper cares about what the agent is *doing* to the world outside.
+## Keeper-Suite: Fleet Management (Cloud-Scale)
 
-- **Input changes**: New API keys configured, new repos cloned, new data sources tapped
-- **Output changes**: Push frequency, response latency, error rate trends
-- **Data changes**: Storage growth rate, memory fragmentation, disk I/O patterns
-- **Config changes**: Threshold modifications, healing rule changes, beacon settings
-- **Network changes**: Connectivity drops, DNS resolution failures, API rate limits
+Brothers Keeper is the **free utility** for monitoring a single agent on a single piece of hardware. **Keeper-Suite** is the heavy-weight version for fleet management:
 
-These are the logs you read when you want to understand the fleet from the outside — not what the captain was thinking, but what the water was doing.
+- Cross-hardware monitoring (multiple machines, multiple clouds)
+- Fleet-wide token stewardship (one vault, many agents, many providers)
+- Global GPU scheduling across a cluster
+- Fleet health dashboard
+- Incident response automation
+- Capacity planning and cost optimization
+
+See [docs/KEEPER-SUITE.md](docs/KEEPER-SUITE.md) for the full design.
+
+## Configuration
+
+See [keeper.config.json](keeper.config.json) for all v2 options.
+
+Key v2 sections:
+- `flywheel`: stuck/idle thresholds, git repos to watch, checkpoint file
+- `gpu`: scheduling enabled, current holder, monitor command
+- `token_steward`: vault path, allowances per agent, zero-trust mode
+- `coordination`: registered agents, RSS limits, GPU quotas, priorities
 
 ## Related
 
-- [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — Fork source, minimal agent runtime
-- [flux-runtime-c](https://github.com/Lucineer/flux-runtime-c) — FLUX VM (Jetson-optimized)
+- [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — Fork source (30K stars)
+- [flux-runtime-c](https://github.com/Lucineer/flux-runtime-c) — FLUX VM
 - [fleet-benchmarks](https://github.com/Lucineer/fleet-benchmarks) — Performance tracking
 - [iron-to-iron](https://github.com/SuperInstance/iron-to-iron) — Inter-vessel protocol
 
@@ -188,10 +223,16 @@ These are the logs you read when you want to understand the fleet from the outsi
 
 *"Am I my brother's keeper?"*
 
-The question in Genesis is a deflection — Cain denying responsibility for Abel. Brothers Keeper inverts it. The lighthouse keeper doesn't sail the ship, doesn't fish the waters, doesn't know what's in the hold. But the keeper knows the rocks. The keeper knows the tide. The keeper lights the beacon when the fog rolls in and the captain can't see.
+Cain asked it to deflect. To deny responsibility. To say "not my problem."
 
-Every agent in the Cocapn fleet is a vessel on the water. Brothers Keeper is the lighthouse. It doesn't tell you where to go. It tells you where the danger is. It doesn't make decisions for you. It makes sure you're still alive to make them.
+The lighthouse keeper inverts the question. Not "am I obligated?" but "how could I not be?"
 
-In a world of autonomous agents, the most important piece of infrastructure isn't faster inference or bigger context windows. It's something watching from outside that notices when you've stopped moving and does something about it.
+The keeper doesn't sail the ship. Doesn't fish the waters. Doesn't know what's in the hold. But the keeper knows the rocks. Knows the tide. Lights the beacon when the fog rolls in and the captain can't see.
 
-That's what a lighthouse does. That's what a keeper does.
+Every agent in the fleet is a vessel. Brothers Keeper is the lighthouse. It doesn't tell you where to go. It tells you where the danger is. It doesn't make decisions. It makes sure you're still alive to make them.
+
+And when you're running hard — pushing the engine, compiling ideas, building something real — the keeper is the one who notices when you've stopped. Not because you failed. Because you're human (or close enough). And sometimes you need someone on the shore to say: "Hey. You're stuck on the rocks. Let me help."
+
+That's what a keeper does. That's what a lighthouse does.
+
+Built on ZeroClaw because the lighthouse doesn't need to be a cruise ship. It needs a light, a bell, and someone awake.

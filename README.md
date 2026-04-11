@@ -214,6 +214,20 @@ Key v2 sections:
 - `token_steward`: vault path, allowances per agent, zero-trust mode
 - `coordination`: registered agents, RSS limits, GPU quotas, priorities
 
+## The Keeper Trio
+
+Brothers Keeper is one of three interconnected repos. Grab what you need.
+
+| Repo | Centricity | Scale | Metaphor | Movement |
+|------|-----------|-------|----------|----------|
+| **[brothers-keeper](https://github.com/Lucineer/brothers-keeper)** | Edge/LAN/hardware | 1 machine | Keeper in the lighthouse | Fixed |
+| **[lighthouse-keeper](https://github.com/Lucineer/lighthouse-keeper)** | System/datacenter | 1 region | The lighthouse itself | Fixed |
+| **[tender](https://github.com/Lucineer/tender)** | Operation/fleet | Multi-site, multi-cloud | **The tender vessel** | **Mobile** |
+
+A solo dev on one Jetson? Just brothers-keeper. A startup with 10 machines? Brothers-keeper on each + lighthouse-keeper aggregating. A fishing fleet of 200 agents across three clouds? All three, layered.
+
+The tender knows what bay the fleet is heading to next. The lighthouse knows the rocks in that bay. The brother watches the specific boat.
+
 ## Related
 
 - [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) — Fork source (30K stars)

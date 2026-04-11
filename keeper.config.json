@@ -1,0 +1,57 @@
+{
+  "watch_processes": [
+    {
+      "name": "openclaw-gateway",
+      "cmd": "pgrep -f 'openclaw.*gateway'"
+    },
+    {
+      "name": "node-agent",
+      "cmd": "pgrep -f 'openclaw.*agent'"
+    }
+  ],
+  "thresholds": {
+    "ram_warning": 80,
+    "ram_critical": 90,
+    "disk_warning": 85,
+    "cpu_warning": 95,
+    "cpu_sustain_sec": 30,
+    "swap_warning": 50
+  },
+  "process": {
+    "check_interval_sec": 30,
+    "restart_cooldown_sec": 300,
+    "max_restart_attempts": 3,
+    "kill_after_stuck_sec": 300
+  },
+  "risk": {
+    "max_concurrent_execs": 5,
+    "max_single_process_mb": 512,
+    "dangerous_patterns": [
+      "fork bomb",
+      "while true"
+    ],
+    "pre_flight_check": true
+  },
+  "logs": {
+    "dir": "/var/log/brothers-keeper",
+    "operational": "operations.log",
+    "resource": "resources.log",
+    "alert": "alerts.log",
+    "process": "processes.log",
+    "max_log_mb": 100,
+    "retention_days": 30
+  },
+  "healing": {
+    "auto_restart_gateway": true,
+    "auto_doctor_fix": true,
+    "auto_clean_tmp": true,
+    "tmp_max_gb": 5,
+    "notify_on_heal": true
+  },
+  "beacon": {
+    "method": "log",
+    "webhook_url": "",
+    "telegram_chat_id": "",
+    "coalesce_sec": 300
+  }
+}

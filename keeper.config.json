@@ -6,8 +6,8 @@
     }
   ],
   "thresholds": {
-    "ram_warning": 80,
-    "ram_critical": 90,
+    "ram_warning": 85,
+    "ram_critical": 92,
     "disk_warning": 85,
     "cpu_warning": 95,
     "cpu_sustain_sec": 30,
@@ -24,7 +24,7 @@
     "pre_flight_check": true
   },
   "logs": {
-    "dir": "/var/log/brothers-keeper",
+    "dir": "/home/lucineer/.local/share/brothers-keeper/logs",
     "operational": "operations.log",
     "resource": "resources.log",
     "alert": "alerts.log",
@@ -65,7 +65,7 @@
   },
   "token_steward": {
     "enabled": true,
-    "vault_path": "",
+    "vault_path": "/home/lucineer/.local/share/brothers-keeper/vault.json",
     "allowances": {},
     "zero_trust": false,
     "checkpoint_gated": false
@@ -75,6 +75,6 @@
     "agents": {},
     "max_agents": 4,
     "resource_sharing": true,
-    "schedule_path": ""
+    "schedule_path": "/home/lucineer/.local/share/brothers-keeper/schedule.json"
   }
 }

@@ -1,5 +1,7 @@
 # brothers-keeper
 
+<p align="center"><img src="KEEP-logo.jpg" alt="KEEP — The Lighthouse Keeper" width="300"></p>
+
 > *"Am I my brother's keeper?"* — Genesis 4:9
 
 **The lighthouse keeper IS.** Not inside the ship, but on the shore. Not part of the fleet's operations, but part of the fleet's survival.

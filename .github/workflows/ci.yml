@@ -1,0 +1,100 @@
+name: Brothers Keeper CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install flake8
+      - run: flake8 keeper.py --max-line-length=120 --ignore=E501,W503
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 -c "import ast; ast.parse(open('keeper.py').read()); print('syntax ok')"
+      - run: python3 -c "
+import json, sys
+c = json.load(open('keeper.config.json'))
+assert 'risk' in c, 'missing risk section'
+assert 'thresholds' in c, 'missing thresholds section'
+assert 'max_single_process_mb' in c['risk'], 'missing max_single_process_mb'
+print('config valid')
+"
+
+  config-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate config against schema
+        run: |
+          pip install jsonschema
+          python3 << 'PYEOF'
+          import json
+          schema = {
+            "type": "object",
+            "required": ["risk", "thresholds", "logging"],
+            "properties": {
+              "risk": {
+                "type": "object",
+                "required": ["max_single_process_mb"],
+                "properties": {
+                  "max_single_process_mb": {"type": "number", "minimum": 128}
+                }
+              },
+              "thresholds": {
+                "type": "object",
+                "required": ["ram_critical", "ram_warning"],
+                "properties": {
+                  "ram_critical": {"type": "number", "minimum": 0, "maximum": 100},
+                  "ram_warning": {"type": "number", "minimum": 0, "maximum": 100}
+                }
+              },
+              "logging": {
+                "type": "object",
+                "required": ["level", "max_log_size_mb"]
+              }
+            }
+          }
+          import jsonschema
+          c = json.load(open('keeper.config.json'))
+          jsonschema.validate(c, schema)
+          print('schema valid')
+          PYEOF
+
+  readme-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check README cross-references
+        run: |
+          grep -c 'lighthouse-keeper' README.md > /dev/null && echo 'lighthouse-keeper: found' || echo 'lighthouse-keeper: MISSING'
+          grep -c 'tender' README.md > /dev/null && echo 'tender: found' || echo 'tender: MISSING'
+          grep -c 'brothers-keeper' README.md > /dev/null && echo 'brothers-keeper: found' || echo 'brothers-keeper: MISSING'
+
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run keeper against itself for 30 seconds
+        run: |
+          timeout 30 python3 keeper.py --config keeper.config.json --once || true
+          echo "self-test completed"

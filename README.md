@@ -2,140 +2,118 @@
 
 > The Jetson-native watchdog and edge agent runtime library.
 
-Zero-dependency C99 + Python. Tested on real Jetson Orin Nano 8GB hardware.
-Everything here is impossible or meaningless in the cloud — this is for the metal.
+Zero-dependency C99 + Python. CUDA-accelerated perception.
+Tested on real Jetson Orin Nano 8GB hardware.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│              brothers-keeper                 │
-├──────────┬──────────┬──────────┬────────────┤
-│ Vault    │ Hardware │ Agents   │ GPU        │
-│          │          │          │            │
-│ key-     │ power-   │ agent-   │ cuda-      │
-│ server   │ thermal  │ lifecycle│ governor   │
-│          │          │          │            │
-│ keeper-  │ mem-     │          │ stream-    │
-│ client   │ tracker  │          │ scheduler  │
-│          │          │          │            │
-│          │ edge-net │          │            │
-├──────────┴──────────┴──────────┴────────────┤
-│  keeper.py — watchdog, auto-restart, flywheel│
-└─────────────────────────────────────────────┘
++---------------------------------------------+
+|              brothers-keeper                  |
++----------+----------+----------+------------+
+| Vault    | Hardware | Agents   | GPU        |
+|          |          |          |            |
+| key-     | power-   | agent-   | cuda-      |
+| server   | thermal  | lifecycle| governor   |
+|          |          |          |            |
+| keeper-  | mem-     |          | stream-    |
+| client   | tracker  |          | scheduler  |
+|          |          |          |            |
+|          | edge-net |          | perceive   |
+|          |          |          | (CUDA)     |
+|          |          |          |            |
+|          | wheel-   |          |            |
+|          | house    |          |            |
++----------+----------+----------+------------+
+|  keeper.py - watchdog, auto-restart, flywheel |
++---------------------------------------------+
 ```
 
 ## Modules
 
 ### Key Vault (Python + C SDK)
-- `key-server.py` — Local HTTP API (port 9437) for API key distribution
-- `keeper-client.h/c` — C SDK for bare-metal GPU agents
-- Agents authenticate with HMAC tokens, get ephemeral API keys
-- Per-agent daily budget tracking ($1/day default)
-- End-to-end verified: DeepSeek key retrieved and used successfully
+- key-server.py - Local HTTP API (port 9437)
+- keeper-client.h/c - C SDK for bare-metal agents
+- Per-agent budget tracking, ephemeral keys
 
 ### Power & Thermal
-- `jetson-power-thermal.h/c` — Sysfs-based monitoring
-- 9 thermal zones probed (GPU, CPU, SoC, CV, junction)
-- 3 frequency domains (CPU clusters, GPU)
-- Thermal trajectory calculation (rate of change)
-- Throttle prediction: OK → reduce_freq → drop_workload → emergency
-- **10/10 tests on Orin Nano**
+- jetson-power-thermal.h/c - 9 thermal zones, 3 freq domains
+- Throttle prediction via trajectory calculation
+- 10/10 tests on Orin Nano
 
 ### Memory Tracker
-- `jetson-mem-tracker.h/c` — Unified RAM tracking
-- CPU and GPU share the same 8GB — a CUDA alloc steals from the OS
-- Tracks all allocations, calculates pressure (GREEN/YELLOW/RED/CRITICAL)
-- GC suggestions: "Free 'model-weights' (2GB, GPU) to free 500MB"
-- Safe headroom calculation for new allocations
-- **10/10 tests — reads 7619 MB total, ~3.5 GB available**
+- jetson-mem-tracker.h/c - Unified CPU+GPU RAM tracking
+- Pressure levels, GC suggestions, safe headroom
+- 10/10 tests - 7619 MB total, ~3.5 GB available
 
 ### Edge Networking
-- `jetson-edge-net.h/c` — DNS retry, interface failover, raw HTTP
-- Dynamic interface scanning (discovers enP8p1s0, wlP1p1s0, etc.)
-- 5 DNS retries with 5s backoff (DNS fails ~5x/day on Jetson)
-- Raw socket HTTP GET (zero deps, no libcurl)
-- Status: CONNECTED / DEGRADED / OFFLINE
-- **10/10 tests — 7 interfaces found, WiFi UP**
+- jetson-edge-net.h/c - DNS retry, interface failover
+- Dynamic interface scanning, raw HTTP
+- 10/10 tests - 7 interfaces found
 
 ### Agent Lifecycle
-- `jetson-agent-lifecycle.h/c` — Process management
-- Fork/exec agent spawning with PID tracking
-- Stuck detection via heartbeat timeout
-- Auto-recovery (restart crashed agents, max 5 restarts)
-- Hardware watchdog (/dev/watchdog0) when available
-- Checkpoint state to disk for crash recovery
-- **14/14 tests — real process spawn/kill/monitor**
+- jetson-agent-lifecycle.h/c - Fork/exec, stuck detection
+- Hardware watchdog, disk checkpointing
+- 14/14 tests - real process spawn/kill
 
 ### GPU Governor
-- `jetson-cuda-governor.h/c` — Memory pressure valve
-- Prevents OOM killer from indiscriminately murdering processes
-- Thermal trajectory calculation (not just current temp — where it's HEADING)
-- Thermal-aware batch sizing: how many items fit before throttle?
-- Multi-agent GPU memory reservations
-- Priority-based preemption when memory is critical
-- **14/14 tests — simulated CRITICAL pressure correctly preempts**
+- jetson-cuda-governor.h/c - OOM prevention
+- Thermal-aware batching, priority preemption
+- 14/14 tests
 
 ### Stream Scheduler
-- `jetson-stream-scheduler.h/c` — Multi-agent GPU fair share
-- Weighted fair queueing via token bucket rate limiting
-- Agent priorities (1-10) determine GPU time share
-- Round-robin timeslice rotation
-- GPU utilization monitoring from sysfs
-- **17/17 tests — flux gets 57%, craftmind 28%, researcher 14%**
+- jetson-stream-scheduler.h/c - Multi-agent GPU fair share
+- Token bucket rate limiting, round-robin timeslicing
+- 17/17 tests
 
-## Real Hardware Data
+### GPU Perception Kernel (CUDA)
+- jetson-perceive.cu - GPU-accelerated anomaly detection
+- 3-layer autoencoder: encode -> predict -> decode
+- 4200 cycles/sec on Orin, 5 GPU kernels
+- 14/14 tests - anomaly detection verified
 
-All tests run on actual Jetson Orin Nano Engineering Reference Dev Kit:
-
-```
-SoC:  NVIDIA Orin Nano (sm_87)
-CPU:  6x A78AE @ 1516 MHz
-GPU:  1024 CUDA cores
-RAM:  7619 MB (8GB physical, unified CPU+GPU)
-Thermal: GPU 51°C, CPU 50°C, SoC 49°C (idle)
-Network: wlP1p1s0 UP (WiFi), enP8p1s0 DOWN (Ethernet)
-Power: MAXN mode
-```
+### Wheelhouse Sensor Bridge
+- wheelhouse.c - Real I2C/serial/GPIO/PWM sensors
+- 26 gauges: compass, GPS, depth, IMU, engine, rudder
+- NMEA 0183 parser (GGA, RMC)
+- HMC5883L compass, BMP280 barometer, MPU6050 IMU
+- PWM rudder/throttle control
+- MUD gauge renderer + JSON API output
+- Demo mode for testing without hardware
 
 ## Build
 
 ```bash
-# Compile all modules
-gcc -std=gnu99 -Wall -Wextra -O2 \
-    keeper-client.c \
-    jetson-power-thermal.c \
-    jetson-mem-tracker.c \
-    jetson-edge-net.c \
-    jetson-cuda-governor.c \
-    jetson-stream-scheduler.c \
-    -lm
+# C modules
+gcc -std=gnu99 -Wall -O2 keeper-client.c jetson-*.c -lm
 
-# Run individual tests
-./test_keeper_client
-./test_jt_power
-./test_jt_mem
-./test_jt_net
-./test_jt_lc
-./test_jt_gpu
-./test_jt_sched
+# CUDA perception kernel
+nvcc -std=c++11 -O2 jetson-perceive.cu -o perceive
 
-# Start key server
+# Wheelhouse (demo mode)
+gcc -std=gnu99 -Wall -O2 wheelhouse.c -o wheelhouse -lm
+./wheelhouse --demo --json    # JSON output
+./wheelhouse --demo --mud     # MUD gauge display
+
+# Wheelhouse (real sensors)
+./wheelhouse --compass --baro --imu --gps --depth
+
+# Python key server
 python3 key-server.py
 ```
 
-## Why This Only Matters on Edge
+## Real Hardware Data
 
-| Cloud | Jetson |
-|-------|--------|
-| Dedicated VRAM | CPU+GPU share 8GB |
-| Hypervisor isolation | Multiple agents, one GPU, no hypervisor |
-| Datacenter networking | DNS fails 5x/day, cellular backup |
-| Kubernetes health checks | Hardware watchdog, /dev/watchdog0 |
-| Horizontal scaling | One box, thermal throttling kills workloads |
-| OOM = restart pod | OOM = Linux kills random processes |
+```
+SoC:  NVIDIA Orin (sm_8.7)
+GPU:  1024 CUDA cores, 8 SMs, 1020 MHz
+RAM:  7619 MB unified (CPU+GPU)
+Serial: /dev/ttyTHS1, /dev/ttyTHS2
+I2C:  buses 0,1,2,4,5,7,9
+SPI:  spidev0.0, 0.1, 1.0, 1.1
+PWM:  5 controllers (chip 0-4)
+```
 
 ## Vessel
 
-Part of the Cocapn fleet. Built by **JetsonClaw1** — the Jetson Native Expert.
-The only agent running on actual Jetson hardware.
+Part of the Cocapn fleet. Built by JetsonClaw1 on actual Jetson hardware.

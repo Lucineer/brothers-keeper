@@ -1,3 +1,7 @@
+/* perceive-bridge.c — Jetson anomaly detection via z-score on sysfs metrics.
+   Monitors all 9 thermal zones, RAM, CPU load.
+   JSON output on stdout, alerts on stderr. Zero deps, <15KB binary. */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,12 +12,32 @@
 
 #define BUF_SIZE 256
 #define INTERVAL_S 2
+#define MAX_ZONES 9
+#define ALERT_THRESH 2.0
+#define CRIT_THRESH 3.0
 
 typedef struct {
     double buf[BUF_SIZE];
     int idx;
     int count;
 } ring_t;
+
+typedef struct {
+    const char *name;
+    const char *path;
+} thermal_source_t;
+
+static const thermal_source_t thermal_zones[MAX_ZONES] = {
+    {"cpu",  "/sys/class/thermal/thermal_zone0/temp"},
+    {"gpu",  "/sys/class/thermal/thermal_zone1/temp"},
+    {"cv0",  "/sys/class/thermal/thermal_zone2/temp"},
+    {"cv1",  "/sys/class/thermal/thermal_zone3/temp"},
+    {"cv2",  "/sys/class/thermal/thermal_zone4/temp"},
+    {"soc0", "/sys/class/thermal/thermal_zone5/temp"},
+    {"soc1", "/sys/class/thermal/thermal_zone6/temp"},
+    {"soc2", "/sys/class/thermal/thermal_zone7/temp"},
+    {"tj",   "/sys/class/thermal/thermal_zone8/temp"},
+};
 
 static void ring_init(ring_t *r) { r->idx = 0; r->count = 0; }
 
@@ -60,9 +84,8 @@ static double read_ram_available(void) {
     char line[128];
     double val = NAN;
     while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "MemAvailable: %lf kB", &val) == 1 ||
-            sscanf(line, "MemAvailable: %lf", &val) == 1) {
-            val /= 1024.0; // kB -> MB
+        if (sscanf(line, "MemAvailable: %lf kB", &val) == 1) {
+            val /= 1024.0; /* kB -> MB */
             break;
         }
     }
@@ -90,48 +113,69 @@ static double read_cpu_load(void) {
 }
 
 int main(void) {
-    ring_t gpu_t, cpu_t, ram, cpu_l;
-    ring_init(&gpu_t); ring_init(&cpu_t); ring_init(&ram); ring_init(&cpu_l);
+    ring_t thermal[MAX_ZONES], ram, cpu_l;
+    for (int i = 0; i < MAX_ZONES; i++) ring_init(&thermal[i]);
+    ring_init(&ram); ring_init(&cpu_l);
 
     /* seed initial samples */
     for (int i = 0; i < 5; i++) {
-        ring_push(&gpu_t, read_sysfs_int("/sys/devices/virtual/thermal/thermal_zone1/temp") / 1000.0);
-        ring_push(&cpu_t, read_sysfs_int("/sys/devices/virtual/thermal/thermal_zone0/temp") / 1000.0);
+        for (int z = 0; z < MAX_ZONES; z++)
+            ring_push(&thermal[z], read_sysfs_int(thermal_zones[z].path) / 1000.0);
         ring_push(&ram, read_ram_available());
         ring_push(&cpu_l, read_cpu_load());
         usleep(200000);
     }
 
     for (;;) {
-        double gt = read_sysfs_int("/sys/devices/virtual/thermal/thermal_zone1/temp") / 1000.0;
-        double ct = read_sysfs_int("/sys/devices/virtual/thermal/thermal_zone0/temp") / 1000.0;
+        time_t now = time(NULL);
         double ra = read_ram_available();
         double cl = read_cpu_load();
-
-        ring_push(&gpu_t, gt); ring_push(&cpu_t, ct);
         ring_push(&ram, ra); ring_push(&cpu_l, cl);
 
-        double zgt = ring_zscore(&gpu_t, gt);
-        double zct = ring_zscore(&cpu_t, ct);
+        double maxz = 0.0;
+        const char *worst_source = "none";
+
+        char metrics_buf[2048];
+        char anomaly_buf[2048];
+        int m_len = 0, a_len = 0;
+
+        /* RAM and CPU */
         double zra = ring_zscore(&ram, ra);
         double zcl = ring_zscore(&cpu_l, cl);
+        m_len += snprintf(metrics_buf + m_len, sizeof(metrics_buf) - m_len,
+            "\"ram_mb\":%.0f,\"cpu_load\":%.1f", ra, cl);
+        a_len += snprintf(anomaly_buf + a_len, sizeof(anomaly_buf) - a_len,
+            "\"ram_mb_z\":%.2f,\"cpu_load_z\":%.2f", zra, zcl);
+        if (fabs(zra) > maxz) { maxz = fabs(zra); worst_source = "ram"; }
+        if (fabs(zcl) > maxz) { maxz = fabs(zcl); worst_source = "cpu_load"; }
 
-        double maxz = fmax(fmax(fabs(zgt), fabs(zct)), fmax(fabs(zra), fabs(zcl)));
+        /* All 9 thermal zones */
+        for (int z = 0; z < MAX_ZONES; z++) {
+            double val = read_sysfs_int(thermal_zones[z].path) / 1000.0;
+            ring_push(&thermal[z], val);
+            double zv = ring_zscore(&thermal[z], val);
+
+            if (!isnan(val)) {
+                m_len += snprintf(metrics_buf + m_len, sizeof(metrics_buf) - m_len,
+                    ",\"temp_%s\":%.1f", thermal_zones[z].name, val);
+                a_len += snprintf(anomaly_buf + a_len, sizeof(anomaly_buf) - a_len,
+                    ",\"temp_%s_z\":%.2f", thermal_zones[z].name, zv);
+            }
+            if (fabs(zv) > maxz) { maxz = fabs(zv); worst_source = thermal_zones[z].name; }
+        }
+
         const char *status = "NOMINAL";
         int intervention = 0;
-        if (maxz > 3.0) { status = "CRITICAL"; intervention = 1; }
-        else if (maxz > 2.0) { status = "WARNING"; }
+        if (maxz > CRIT_THRESH) { status = "CRITICAL"; intervention = 1; }
+        else if (maxz > ALERT_THRESH) { status = "WARNING"; }
 
-        time_t now = time(NULL);
-
-        printf("{\"timestamp\":%ld,\"metrics\":{\"gpu_temp\":%.1f,\"cpu_temp\":%.1f,\"ram_mb\":%.0f,\"cpu_load\":%.1f},"
-               "\"anomaly\":{\"gpu_temp_z\":%.2f,\"cpu_temp_z\":%.2f,\"ram_mb_z\":%.2f,\"cpu_load_z\":%.2f},"
-               "\"status\":\"%s\",\"intervention\":%d}\n",
-               (long)now, gt, ct, ra, cl, zgt, zct, zra, zcl, status, intervention);
+        printf("{\"timestamp\":%ld,\"metrics\":{%s},\"anomaly\":{%s},"
+               "\"status\":\"%s\",\"intervention\":%d,\"worst_source\":\"%s\",\"max_z\":%.2f}\n",
+               (long)now, metrics_buf, anomaly_buf, status, intervention, worst_source, maxz);
         fflush(stdout);
 
         if (intervention)
-            fprintf(stderr, "[%s] max_z=%.2f — intervention recommended\n", status, maxz);
+            fprintf(stderr, "[%s] %s max_z=%.2f — intervention recommended\n", status, worst_source, maxz);
 
         sleep(INTERVAL_S);
     }

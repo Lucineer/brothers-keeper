@@ -18,6 +18,7 @@ log = logging.getLogger("wheelhouse-api")
 
 WHEELHOUSE_BIN = "/tmp/wheelhouse"
 WHEELHOUSE_ARGS = ["--demo", "--json"]
+PERCEIVE_BIN = "/tmp/perceive-bridge"
 PORT = 9440
 HEALTH_CHECK_INTERVAL = 5
 
@@ -25,10 +26,22 @@ state = {}
 state_lock = threading.Lock()
 start_time = time.time()
 wheelhouse_proc = None
+perceive_proc = None
+anomaly_history = []  # last 50 anomaly events
+MAX_ANOMALY_HISTORY = 50
 
 
 def log_ts(msg):
     log.info(msg)
+
+
+def record_anomaly(event):
+    """Record anomaly event, keep bounded history."""
+    global anomaly_history
+    with state_lock:
+        anomaly_history.append(event)
+        if len(anomaly_history) > MAX_ANOMALY_HISTORY:
+            anomaly_history = anomaly_history[-MAX_ANOMALY_HISTORY:]
 
 
 def spawn_wheelhouse():
@@ -79,13 +92,81 @@ def reader_loop():
             log_ts(f"Non-JSON line from wheelhouse: {line[:120]}")
 
 
+def spawn_perceive():
+    """Spawn perceive-bridge (anomaly detection daemon)."""
+    global perceive_proc
+    log_ts(f"Spawning {PERCEIVE_BIN}")
+    try:
+        perceive_proc = subprocess.Popen(
+            [PERCEIVE_BIN],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+        )
+        return True
+    except FileNotFoundError:
+        log_ts(f"{PERCEIVE_BIN} not found — running without perception")
+        return False
+    except Exception as e:
+        log_ts(f"Failed to spawn perceive-bridge: {e}")
+        return False
+
+
+def perceive_reader_loop():
+    """Read perceive-bridge stdout, merge anomaly data into state."""
+    global perceive_proc
+    while True:
+        proc = perceive_proc
+        if proc is None or proc.poll() is not None:
+            code = proc.returncode if proc else "no proc"
+            log_ts(f"perceive-bridge exited (code={code}), restarting in 3s...")
+            time.sleep(3)
+            if not spawn_perceive():
+                time.sleep(10)
+                continue
+            proc = perceive_proc
+
+        line = proc.stdout.readline()
+        if not line:
+            time.sleep(0.1)
+            continue
+        line = line.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            metrics = data.get("metrics", {})
+            anomaly = data.get("anomaly", {})
+            status = data.get("status", "NOMINAL")
+            intervention = data.get("intervention", 0)
+
+            # Merge metrics into state with perceive_ prefix
+            with state_lock:
+                for k, v in metrics.items():
+                    state[f"perceive_{k}"] = v
+                for k, v in anomaly.items():
+                    state[f"anomaly_{k}"] = v
+                state["perceive_status"] = status
+
+            # Record anomaly events
+            if intervention or status != "NOMINAL":
+                record_anomaly(data)
+                log_ts(f"Perception: {status} (max_z={max(abs(v) for v in anomaly.values()):.1f})")
+
+        except json.JSONDecodeError:
+            pass
+
+
 def health_checker():
-    """Periodically check subprocess is alive, restart if not."""
+    """Periodically check subprocesses are alive, restart if not."""
     while True:
         time.sleep(HEALTH_CHECK_INTERVAL)
         if wheelhouse_proc is None or wheelhouse_proc.poll() is not None:
             log_ts("Health check: wheelhouse dead, restarting")
             spawn_wheelhouse()
+        if perceive_proc is None or perceive_proc.poll() is not None:
+            log_ts("Health check: perceive-bridge dead, restarting")
+            spawn_perceive()
 
 
 def get_sub(prefixes):
@@ -104,6 +185,8 @@ ROUTES = {
     "/motion": lambda: get_sub(["accel", "roll", "pitch", "gyro", "imu"]),
     "/control": lambda: get_sub(["rudder", "throttle"]),
     "/system": lambda: get_sub(["gpu", "cpu", "ram", "mem", "load"]),
+    "/perception": lambda: get_sub(["perceive_", "anomaly_"]) | {"status": state.get("perceive_status"), "history_count": len(anomaly_history)},
+    "/anomalies": lambda: list(anomaly_history),
 }
 
 CORS_HEADERS = {
@@ -140,10 +223,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/health":
             alive = wheelhouse_proc is not None and wheelhouse_proc.poll() is None
+            perc_alive = perceive_proc is not None and perceive_proc.poll() is None
             self._json({
                 "status": "ok",
                 "uptime_seconds": round(time.time() - start_time, 1),
                 "wheelhouse_running": alive,
+                "perception_running": perc_alive,
+                "anomaly_count": len(anomaly_history),
+                "perception_status": state.get("perceive_status", "unknown"),
             })
             return
 
@@ -212,9 +299,14 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     if not spawn_wheelhouse():
         log_ts("WARNING: wheelhouse binary not available, running with empty state")
+    if not spawn_perceive():
+        log_ts("WARNING: perceive-bridge not available, running without anomaly detection")
 
     t_reader = threading.Thread(target=reader_loop, daemon=True)
     t_reader.start()
+
+    t_perceive = threading.Thread(target=perceive_reader_loop, daemon=True)
+    t_perceive.start()
 
     t_health = threading.Thread(target=health_checker, daemon=True)
     t_health.start()

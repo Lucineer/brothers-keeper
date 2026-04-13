@@ -282,10 +282,11 @@ static int nmea_parse_gga(const char *sentence, float *lat, float *lon,
     char fields[15][32];
     int fi = 0;
 
+    fields[0][0] = 0;
     while (*p && fi < 15) {
         if (*p == ',' || *p == '*') {
-            fields[fi][0] = 0;
             fi++;
+            if (fi < 15) fields[fi][0] = 0;
         } else if (*p == '\r' || *p == '\n') {
             break;
         } else {
@@ -298,29 +299,28 @@ static int nmea_parse_gga(const char *sentence, float *lat, float *lon,
         p++;
     }
 
-    if (fi < 6) return -1;
+    if (fi < 8) return -1;
 
-    /* Lat: DDMM.MMMM N/S */
-    if (strlen(fields[1]) > 4) {
-        float lat_raw = atof(fields[1]);
+    /* GGA: field[0]=$GPGGA, [1]=time, [2]=lat, [3]=N/S, [4]=lon, [5]=E/W, [6]=quality, [7]=sats, [8]=hdop, [9]=alt */
+    if (strlen(fields[2]) > 4) {
+        float lat_raw = atof(fields[2]);
         int lat_deg = (int)(lat_raw / 100.0f);
         float lat_min = lat_raw - lat_deg * 100.0f;
         *lat = lat_deg + lat_min / 60.0f;
-        if (fields[2][0] == 'S') *lat = -(*lat);
+        if (fields[3][0] == 'S') *lat = -(*lat);
     }
 
-    /* Lon: DDDMM.MMMM E/W */
-    if (strlen(fields[3]) > 5) {
-        float lon_raw = atof(fields[3]);
+    if (strlen(fields[4]) > 5) {
+        float lon_raw = atof(fields[4]);
         int lon_deg = (int)(lon_raw / 100.0f);
         float lon_min = lon_raw - lon_deg * 100.0f;
         *lon = lon_deg + lon_min / 60.0f;
-        if (fields[4][0] == 'W') *lon = -(*lon);
+        if (fields[5][0] == 'W') *lon = -(*lon);
     }
 
-    *quality = atoi(fields[5]);
-    *sats = atoi(fields[6]);
-    *alt = atof(fields[8]);
+    *quality = atoi(fields[6]);
+    *sats = atoi(fields[7]);
+    *alt = atof(fields[9]);
     return 0;
 }
 
@@ -334,10 +334,11 @@ static int nmea_parse_rmc(const char *sentence, int *status, float *lat, float *
     char fields[15][32];
     int fi = 0;
 
+    fields[0][0] = 0;
     while (*p && fi < 15) {
         if (*p == ',' || *p == '*') {
-            fields[fi][0] = 0;
             fi++;
+            if (fi < 15) fields[fi][0] = 0;
         } else if (*p == '\r' || *p == '\n') {
             break;
         } else {
@@ -350,25 +351,26 @@ static int nmea_parse_rmc(const char *sentence, int *status, float *lat, float *
         p++;
     }
 
-    if (fi < 7) return -1;
+    if (fi < 8) return -1;
 
-    *status = (fields[1][0] == 'A') ? 1 : 0;
+    /* RMC: field[0]=$GPRMC, [1]=time, [2]=status, [3]=lat, [4]=N/S, [5]=lon, [6]=E/W, [7]=speed, [8]=course */
+    *status = (fields[2][0] == 'A') ? 1 : 0;
 
-    if (strlen(fields[2]) > 4) {
-        float lat_raw = atof(fields[2]);
+    if (strlen(fields[3]) > 4) {
+        float lat_raw = atof(fields[3]);
         int lat_deg = (int)(lat_raw / 100.0f);
         *lat = lat_deg + (lat_raw - lat_deg * 100.0f) / 60.0f;
-        if (fields[3][0] == 'S') *lat = -(*lat);
+        if (fields[4][0] == 'S') *lat = -(*lat);
     }
-    if (strlen(fields[4]) > 5) {
-        float lon_raw = atof(fields[4]);
+    if (strlen(fields[5]) > 5) {
+        float lon_raw = atof(fields[5]);
         int lon_deg = (int)(lon_raw / 100.0f);
         *lon = lon_deg + (lon_raw - lon_deg * 100.0f) / 60.0f;
-        if (fields[5][0] == 'W') *lon = -(*lon);
+        if (fields[6][0] == 'W') *lon = -(*lon);
     }
 
-    *speed_knots = atof(fields[6]);
-    *course = atof(fields[7]);
+    *speed_knots = atof(fields[7]);
+    *course = atof(fields[8]);
     return 0;
 }
 

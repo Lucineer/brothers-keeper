@@ -125,7 +125,7 @@ bool jt_net_any_up(const JTNetState *state) {
 
 int jt_net_best_iface(const JTNetState *state) {
     if (!state) return -1;
-    if (state->active_iface >= 0) return state->active_iface;
+    if (state->active_iface >= 0 && state->active_iface < state->iface_count) return state->active_iface;
     for (int i = 0; i < state->iface_count; i++)
         if (state->ifaces[i].up) return i;
     return -1;
